@@ -53,11 +53,12 @@ jobs:
 
       - name: Build and push
         id: build
-        uses: docker/build-push-action@2cdde995de11925a030ce8070c3d77a52ffcf1c0 # v5.3.0
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c1c # v6.18.0
         with:
           context: .
           push: true
           tags: ${{ steps.img.outputs.name }}:${{ github.sha }}
+          provenance: false
 
       - name: Sign with Cosign (keyless)
         run: |
@@ -71,7 +72,7 @@ jobs:
             ${{ steps.img.outputs.name }}@${{ steps.build.outputs.digest }}
 
       - name: Generate SLSA provenance
-        uses: actions/attest-build-provenance@173725a1209d09b31f9d30a3890cf2757ebbff0d # v1.1.2
+        uses: actions/attest-build-provenance@977bb373ede98d70efbf65b38cf42c1af020b9c8 # v3.0.0
         with:
           subject-name: ${{ steps.img.outputs.name }}
           subject-digest: ${{ steps.build.outputs.digest }}
