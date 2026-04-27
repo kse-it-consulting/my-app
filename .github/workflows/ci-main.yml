@@ -53,7 +53,7 @@ jobs:
 
       - name: Build and push
         id: build
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c1c # v6.18.0
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           push: true
@@ -72,7 +72,7 @@ jobs:
             ${{ steps.img.outputs.name }}@${{ steps.build.outputs.digest }}
 
       - name: Generate SLSA provenance
-        uses: actions/attest-build-provenance@977bb373ede98d70efbf65b38cf42c1af020b9c8 # v3.0.0
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
           subject-name: ${{ steps.img.outputs.name }}
           subject-digest: ${{ steps.build.outputs.digest }}
