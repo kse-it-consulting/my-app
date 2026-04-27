@@ -1,0 +1,149 @@
+name: Main Build
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+  attestations: write
+  security-events: write
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@60edb5dd545a775178f52524783378180af0d1f8 # v4.0.2
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+  docker-build-sign:
+    needs: build-and-test
+    runs-on: self-hosted
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+      image: ${{ steps.img.outputs.name }}
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+
+      - name: Lowercase image name
+        id: img
+        run: echo "name=$(echo ghcr.io/${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
+      - uses: sigstore/cosign-installer@e1523de7571e31dbe865fd2e80c5c7c23ae71eb4 # v3.4.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@e92390c5fb421da1463c202d546fed0ec5c39f20 # v3.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@2cdde995de11925a030ce8070c3d77a52ffcf1c0 # v5.3.0
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.img.outputs.name }}:${{ github.sha }}
+
+      - name: Sign with Cosign (keyless)
+        run: |
+          cosign sign --yes ${{ steps.img.outputs.name }}@${{ steps.build.outputs.digest }}
+
+      - name: Verify signature
+        run: |
+          cosign verify \
+            --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+            --certificate-identity-regexp="https://github.com/${{ github.repository }}" \
+            ${{ steps.img.outputs.name }}@${{ steps.build.outputs.digest }}
+
+      - name: Generate SLSA provenance
+        uses: actions/attest-build-provenance@173725a1209d09b31f9d30a3890cf2757ebbff0d # v1.1.2
+        with:
+          subject-name: ${{ steps.img.outputs.name }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Verify provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh attestation verify \
+            oci://${{ steps.img.outputs.name }}@${{ steps.build.outputs.digest }} \
+            --owner ${{ github.repository_owner }}
+
+  sbom-and-scan:
+    needs: docker-build-sign
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+
+      - name: Generate SBOM with Trivy
+        uses: aquasecurity/trivy-action@6e7b7d1fd3e4fef0c5fa8cce1229c54b2c9bd0d8 # v0.20.0
+        with:
+          image-ref: ${{ needs.docker-build-sign.outputs.image }}@${{ needs.docker-build-sign.outputs.digest }}
+          format: cyclonedx
+          output: sbom.cdx.json
+
+      - name: Upload SBOM to Dependency-Track
+        if: ${{ vars.DTRACK_URL != '' }}
+        run: |
+          curl -sf -X POST "${{ vars.DTRACK_URL }}/api/v1/bom" \
+            -H "X-Api-Key: ${{ secrets.DTRACK_API_KEY }}" \
+            -H "Content-Type: multipart/form-data" \
+            -F "projectName=my-app" \
+            -F "projectVersion=${{ github.sha }}" \
+            -F "autoCreate=true" \
+            -F "bom=@sbom.cdx.json"
+
+      - name: Run Trivy container scan
+        uses: aquasecurity/trivy-action@6e7b7d1fd3e4fef0c5fa8cce1229c54b2c9bd0d8 # v0.20.0
+        with:
+          image-ref: ${{ needs.docker-build-sign.outputs.image }}@${{ needs.docker-build-sign.outputs.digest }}
+          format: sarif
+          output: trivy-image-results.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@012739e5082ff0c22ca6d6ab32e07c36df03c4a4 # v3.22.12
+        if: always()
+        with:
+          sarif_file: trivy-image-results.sarif
+
+  update-deployment:
+    needs: docker-build-sign
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout deployment repo
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          repository: ${{ github.repository_owner }}/kse-labs-deployment
+          token: ${{ secrets.DEPLOYMENT_PAT }}
+
+      - name: Update image tag
+        run: |
+          IMAGE_LC=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          sed -i "s|image: $IMAGE_LC:.*|image: $IMAGE_LC:${{ github.sha }}|" \
+            applications/my-app/deployment.yaml
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add applications/my-app/deployment.yaml
+          git diff --cached --quiet || \
+            (git commit -m "deploy: my-app ${{ github.sha }}" && git push)
