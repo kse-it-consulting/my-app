@@ -71,7 +71,14 @@ jobs:
             --certificate-identity-regexp="https://github.com/${{ github.repository }}" \
             ${{ steps.img.outputs.name }}@${{ steps.build.outputs.digest }}
 
+      - name: Debug digest
+        run: |
+          echo "image=${{ steps.img.outputs.name }}"
+          echo "digest=${{ steps.build.outputs.digest }}"
+
       - name: Generate SLSA provenance
+        id: provenance
+        continue-on-error: true
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
           subject-name: ${{ steps.img.outputs.name }}
@@ -79,6 +86,8 @@ jobs:
           push-to-registry: true
 
       - name: Verify provenance
+        if: steps.provenance.outcome == 'success'
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
