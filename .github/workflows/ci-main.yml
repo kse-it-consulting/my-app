@@ -93,29 +93,29 @@ jobs:
 
   sbom-and-scan:
     needs: docker-build-sign
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
 
-      - name: Log in to GHCR
-        uses: docker/login-action@e92390c5fb421da1463c202d546fed0ec5c39f20 # v3.1.0
+      - name: Install Trivy binary
+        uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514 # v0.2.6
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          version: v0.55.0
+          cache: true
 
       - name: Generate SBOM with Trivy
-        uses: aquasecurity/trivy-action@6e7b7d1fd3e4fef0c5fa8cce1229c54b2c9bd0d8 # v0.20.0
         env:
           TRIVY_USERNAME: ${{ github.actor }}
           TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          image-ref: ${{ needs.docker-build-sign.outputs.image }}@${{ needs.docker-build-sign.outputs.digest }}
-          format: cyclonedx
-          output: sbom.cdx.json
+        run: |
+          trivy image \
+            --format cyclonedx \
+            --output sbom.cdx.json \
+            "${{ needs.docker-build-sign.outputs.image }}@${{ needs.docker-build-sign.outputs.digest }}"
 
       - name: Upload SBOM to Dependency-Track
         if: ${{ vars.DTRACK_URL != '' }}
+        continue-on-error: true
         run: |
           curl -sf -X POST "${{ vars.DTRACK_URL }}/api/v1/bom" \
             -H "X-Api-Key: ${{ secrets.DTRACK_API_KEY }}" \
@@ -126,22 +126,24 @@ jobs:
             -F "bom=@sbom.cdx.json"
 
       - name: Run Trivy container scan
-        uses: aquasecurity/trivy-action@6e7b7d1fd3e4fef0c5fa8cce1229c54b2c9bd0d8 # v0.20.0
         env:
           TRIVY_USERNAME: ${{ github.actor }}
           TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          image-ref: ${{ needs.docker-build-sign.outputs.image }}@${{ needs.docker-build-sign.outputs.digest }}
-          format: sarif
-          output: trivy-image-results.sarif
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
+        run: |
+          trivy image \
+            --format sarif \
+            --output trivy-image-results.sarif \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            "${{ needs.docker-build-sign.outputs.image }}@${{ needs.docker-build-sign.outputs.digest }}"
 
       - name: Upload Trivy results to GitHub Security
         uses: github/codeql-action/upload-sarif@012739e5082ff0c22ca6d6ab32e07c36df03c4a4 # v3.22.12
         if: always()
+        continue-on-error: true
         with:
           sarif_file: trivy-image-results.sarif
+          category: trivy-image
 
   secret-scan:
     runs-on: ubuntu-latest
