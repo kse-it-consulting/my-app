@@ -143,6 +143,28 @@ jobs:
         with:
           sarif_file: trivy-image-results.sarif
 
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+
+      - name: Log in to GHCR (pull secret-scan-tool image)
+        uses: docker/login-action@e92390c5fb421da1463c202d546fed0ec5c39f20 # v3.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - name: Pull secret scanner
+        run: docker pull ghcr.io/kse-it-consulting/secret-scan-tool:latest
+
+      - name: Run secret scan
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}":/scan \
+            ghcr.io/kse-it-consulting/secret-scan-tool:latest \
+            /scan/
+
   update-deployment:
     needs: docker-build-sign
     runs-on: ubuntu-latest
