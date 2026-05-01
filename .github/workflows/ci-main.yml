@@ -6,14 +6,12 @@ on:
 
 permissions:
   contents: read
-  packages: write
-  id-token: write
-  attestations: write
-  security-events: write
 
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
 
@@ -32,6 +30,11 @@ jobs:
   docker-build-sign:
     needs: build-and-test
     runs-on: self-hosted
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
     outputs:
       digest: ${{ steps.build.outputs.digest }}
       image: ${{ steps.img.outputs.name }}
@@ -94,6 +97,10 @@ jobs:
   sbom-and-scan:
     needs: docker-build-sign
     runs-on: self-hosted
+    permissions:
+      contents: read
+      security-events: write
+      packages: read
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
 
@@ -148,6 +155,9 @@ jobs:
 
   secret-scan:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
 
@@ -171,6 +181,8 @@ jobs:
   update-deployment:
     needs: docker-build-sign
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout deployment repo
         uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
